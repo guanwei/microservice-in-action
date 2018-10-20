@@ -77,7 +77,7 @@ run Rack::Cascade.new [API]
 $ rackup
 ```
 
-打开浏览器，访问 http://localhost:9292
+打开浏览器，访问 <http://localhost:9292>
 
 ### 代码测试
 
