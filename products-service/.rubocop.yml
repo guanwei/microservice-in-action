@@ -1,0 +1,25 @@
+inherit_from: .rubocop_todo.yml
+
+EmptyLinesAroundBlockBody:
+  Exclude:
+    - 'spec/**/*'
+
+LineLength:
+  Max: 120
+  Exclude:
+    - 'spec/**/*'
+    - 'config/initializers/*'
+
+MethodLength:
+  Max: 20
+  Exclude:
+    - 'db/migrate/*'
+
+Metrics/ClassLength:
+  Max: 120
+
+Metrics/PerceivedComplexity:
+  Max: 10
+
+WordArray:
+  MinSize: 2

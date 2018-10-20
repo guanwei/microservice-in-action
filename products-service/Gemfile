@@ -1,0 +1,16 @@
+#source 'https://gems.ruby-china.com'   # 使用Ruby China Gems镜像
+source 'https://rubygems.org'          # 使用官方的Gems镜像
+
+gem 'grape'
+
+group :development, :test do
+  gem 'rspec'
+  gem 'rspec-its'
+  gem 'byebug'
+  gem 'simplecov', require: false
+  gem 'rubocop'
+  gem 'cane'
+end
+
+gem 'rake'
+gem 'rack-test'
