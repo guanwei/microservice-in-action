@@ -447,7 +447,7 @@ $ docker run --name products-service -d -it -p 9292:9292 products-service
 $ docker ps -a | grep products-service
 ```
 
-打开浏览器访问 http://localhost:9292，测试网站是否运行成功。
+打开浏览器访问 [http://localhost:9292]，测试网站是否运行成功。
 
 查看products-service容器的IP
 ```
@@ -458,4 +458,4 @@ $ docker inspect --format '{{ .NetworkSettings.IPAddress }}' products-service
 
 * 发布到Docker Hub
 
-登录Docker Hub (https://hub.docker.com/)，创建Docker Hub工程，
+登录Docker Hub [https://hub.docker.com/]，创建Docker Hub工程，
