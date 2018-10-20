@@ -458,4 +458,4 @@ $ docker inspect --format '{{ .NetworkSettings.IPAddress }}' products-service
 
 * 发布到Docker Hub
 
-登录Docker Hub <https://hub.docker.com/>，创建Docker Hub工程，
+登录Docker Hub <https://hub.docker.com/>，依次点击 Create -> Create Automated Build -> Create Auto-build Github，选择`microservice-in-action`，Repository Name填写为`products-service`, Dockerfile Location填写为 `products-service/`，简单填写Short Description，然后点击Create。
