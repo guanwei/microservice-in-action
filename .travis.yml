@@ -7,4 +7,4 @@ jobs:
   - stage: build
     install: bundle install --jobs=8 --retry=3
   - stage: test
-    script: bundle exec rake
+    script: bundle exec rake -f products-service/Rakefile
