@@ -1,10 +1,8 @@
 dist: trusty
 
-gemfile: products-service/Gemfile
-
 jobs:
   include:
   - stage: build
-    install: bundle install --jobs=8 --retry=3
+    install: bundle install --gemfile=products-service/Gemfile --jobs=8 --retry=3
   - stage: test
     script: bundle exec rake -f products-service/Rakefile
