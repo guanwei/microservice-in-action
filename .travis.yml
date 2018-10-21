@@ -2,4 +2,5 @@ language: ruby
 gemfile: products-service/Gemfile
 
 install: bundle install --jobs=8 --retry=3
-script: bundle exec rake -f products-service/Rakefile
+before_script: cd products-service
+script: bundle exec rake
