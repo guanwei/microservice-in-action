@@ -1,4 +1,6 @@
 language: ruby
+rvm:
+  - 2.5.0
 gemfile: products-service/Gemfile
 
 install: bundle install --jobs=8 --retry=3
