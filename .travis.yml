@@ -1,11 +1,6 @@
 dist: trusty
 
 gemfile: products-service/Gemfile
-rakefile: products-service/Rakefile
 
-jobs:
-  include:
-  - stage: build
-    install: bundle install --jobs=8 --retry=3
-  - stage: test
-    script: bundle exec rake
+install: bundle install --jobs=8 --retry=3
+script: bundle exec rake -f products-service/Rakefile
