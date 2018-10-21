@@ -411,7 +411,7 @@ RUN apt-get update -y
 ADD . /app
 
 WORKDIR /app
-RUN bundle install --jobs 8
+RUN bundle install --jobs=8 --retry=3
 
 EXPOSE 9292
 
@@ -459,3 +459,435 @@ $ docker inspect --format '{{ .NetworkSettings.IPAddress }}' products-service
 * 发布到Docker Hub
 
 登录Docker Hub <https://hub.docker.com/>，依次点击 Create -> Create Automated Build -> Create Auto-build Github，选择`microservice-in-action`，Repository Name填写为`products-service`, Dockerfile Location填写为 `products-service/`，简单填写Short Description，然后点击Create。
+
+点击 Build Settings -> Trigger，手动触发一个Docker镜像的build。
+
+* 发布到私有的Docker仓库
+
+可以使用如下脚本，将Docker镜像发布到内部的Docker仓库。
+```
+#!/bin/bash
+
+DOCKER_REGISTRY_URL=$DOCKER_REGISTRY_URL
+DOCKER_REGISTRY_USER_NAME=$DOCKER_REGISTRY_USER_NAME
+APP_NAME=$APP_NAME
+
+BUILD_NUMBER=${BUILD_NUMBER:-dev}
+VERSION=${MAJOR_VERSION}.$BUILD_NUMBER
+
+FULL_TAG=$DOCKER_REGISTRY_URL/$DOCKER_REGISTRY_USER_NAME/$APP_NAME:$VERSION
+FILE_NAME=$APP_NAME-$VERSION
+
+echo "Building Docker image..."
+docker build --tag $FULL_TAG .
+
+if [ $DOCKER_REGISTRY_URL != "localhost" ]; then
+  echo "Pushing Docker image to Registry..."
+  docker push $FULL_TAG
+fi
+```
+
+* 发布到云存储
+
+可以将Docker及镜像导成tar包，存储到AWS的S3上，示例代码如下：
+```
+#!/bin/bash
+
+APP_NAME=$APP_NAME
+
+BUILD_NUMBER=${BUILD_NUMBER:-dev}
+VERSION=${MAJOR_VERSION}.$BUILD_NUMBER
+
+S3_BUCKET=$S3_BUCKET
+
+FULL_TAG=$APP_NAME:$VERSION
+FILE_NAME=$APP_NAME-$VERSION
+
+mkdir -p target
+
+echo "Saving Docker image to local file..."
+docker save -o target/$FILE_NAME.tar $FULL_TAG
+
+echo "Compressing local Docker image..."
+gzip --force target/$FILE_NAME.tar
+
+echo "Uploading docker image to S3..."
+aws s3 mv target/$FILE_NAME.tar.gz s3://$S3_BUCKET/$APP_NAME/$FILE_NAME.tar.gz
+```
+
+## 部署Docker镜像
+
+### 基础设施AWS
+
+对当前的products-service而言，基础设施主要包括：
+* 虚拟私有云（Virtual Private Cloud）
+* 安全组（Security Group）
+* 计算实例（Elastic Compute Cloud）
+* 自动扩容机制（Auto scaling）
+* DNS解析（Route 53）
+
+### 基础设施自动化
+
+AWS提供[CloudFormation]（http://aws.amazon.com/cloudformation/）帮助用户在AWS上高效创建基础设施。
+
+使用CloudFormation创建相关的基础设施，主要包括：
+* AWS EC2节点的创建
+* AWS Security Group的创建
+* AWS DNS解析的配置
+* AWS Autoscaling Group自动扩容机制的创建
+
+如下为CloudFormation的配置文件：
+```
+{
+  "Resources": {
+    "instanceSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security Group",
+        "VpcId": "vpc-xxxxx",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "products-service"
+          }
+        ]
+      }
+    },
+    "loadBalancerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security Group",
+        "VpcId": "vpc-xxxxx",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "products-service"
+          }
+        ]
+      }
+    },
+    "dnsRecord": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "Comment": "Public Record",
+        "HostedZoneName": "products-service.test.microservice-in-action.com",
+        "Type": "A",
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::GetAtt": [
+              "loadBalancer",
+              "DNSName"
+            ]
+          },
+          "HostedZoneId": {
+            "Fn::GetAtt": [
+              "loadBalancer",
+              "CanonicalHostedZoneNameID"
+            ]
+          }
+        }
+      }
+    },
+    "loadBalancer": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "Scheme": "internal",
+        "Subnets": [
+          "subnet-xxxxxx",
+          "subnet-xxxxxx"
+        ],
+        "SecurityGroups": [
+          {
+            "Ref": "loadBalancerSecurityGroup"
+          }
+        ],
+        "Listeners": [
+          {
+            "Protocol": "HTTP",
+            "LoadBalancerPort": 80,
+            "InstancePort": 80
+          }
+        ],
+        "HealthCheck": {
+          "Target": "HTTP:80/diagnostic/status/heartbeat",
+          "HealthyThreshold": 2,
+          "UnhealthyThreshold": 4,
+          "Interval": 10,
+          "Timeout": 8
+        },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": {
+          "Enabled": true,
+          "Timeout": 30
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "products-service"
+          }
+        ]
+      }
+    },
+    "dnsRecordservices": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "Comment": "Public Record",
+        "HostedZoneName": "products-service.test.microservice-in-action.com",
+        "Name": "products-service.test.microservice-in-action.com",
+        "Type": "A",
+        "AliasTarget": {
+          "DNSNAME": {
+            "Fn::GetAtt": [
+              "loadBalancer",
+              "DNSName"
+            ]
+          },
+          "HostedZoneId": {
+            "Fn::GetAtt": [
+              "loadBalancer",
+              "CanonicalHostedZoneNameID"
+            ]
+          }
+        }
+      }
+    },
+    "launchConfiguration-xxxxxx": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": {
+          "Ref": "iamInstanceProfile"
+        },
+        "ImageId": "ami-xxxxxx",
+        "InstanceType": "t2.medium",
+        "InstanceMonitoring": true,
+        "SecurityGroups": [
+          {
+            "Ref": "instancesSecurityGroup"
+          }
+        ]
+      }
+    },
+    "autoScallingGroup-xxxxxx": {
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT5M"
+        }
+      },
+      "Type": "AWS::AutoScalling::AutoScallingGroup",
+      "Proerties": {
+        "AvailabilityZones": [
+          "ap-southeast-2b",
+          "ap-southeast-2a"
+        ],
+        "Cooldown": "120",
+        "DesiredCapacity": "1",
+        "HealthCheckType": "ELB",
+        "LaunchConfigurationName": {
+          "Ref": "launchConfiguration-xxxxxx"
+        },
+        "LoadBalancerNames": [
+          {
+            "Ref": "loadBalancer"
+          }
+        ],
+        "MaxSize": "1",
+        "MinSize": "1",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "products-service",
+            "PropagateAtLaunch": true
+          },
+          {
+            "Key": "application",
+            "Value": "products-service",
+            "PropagateAtLaunch": true
+          }
+        ],
+        "VPCZoneIdentifier": [
+          "subnet-xxxxxx",
+          "subnet-xxxxxx"
+        ]
+      }
+    },
+    "scheduledAction-xxxxxx": {
+      "Type": "AWS::AUtoScalling::ScheduledAction",
+      "Properties": {
+        "AutoScallingGroupName": {
+          "Ref": "autoScallingGroup-xxxxxx"
+        },
+        "DesiredCapacity": 0,
+        "MaxSize": 0,
+        "MinSize": 0,
+        "Recurrence": "0 11 * * *"
+      }
+    }
+  },
+  "Outputs": {
+    "iamRoleArn": {
+      "Value": "products-service-iam-role"
+    },
+    "DNSName": {
+      "Value": {
+        "Ref": "dnsRecord"
+      }
+    },
+    "loadBalancerAddress": {
+      "Value": {
+        "Fn::GetAtt": [
+          "loadBalancer",
+          "DNSName"
+        ]
+      }
+    }
+  }
+}
+```
+
+## 部署Docker镜像
+
+之前我们已经把products-service的Docker镜像发布到了Docker Hub，因此可以使用下面的脚本`docker-deploy.sh`完成Docker镜像的部署。
+```
+#!/bin/bash
+set -e
+
+DOCKER_REGISTRY_USER_NAME="guanwei"
+APP_NAME="products-service"
+APP_VERSION="latest"
+
+FULL_TAG=$DOCKER_REGISTRY_USER_NAME/$APP_NAME:$APP_VERSION
+
+echo "Pulling Dokcer image from Registry"
+docker pull $FULL_TAG
+
+echo "Launching Docker Container"
+docker run -d -p 80:9292 $FULL_TAG
+```
+
+## 自动化部署
+
+1. 首先，实现自动化部署脚本`deploy/deploy.sh`，如下：
+```
+#!/bin/bash
+set -e
+
+[[ -z "$1" ]] && echo "Usage: Please Specify deployment file !!!" && exit 1
+
+# 根据环境解析配置文件
+echo "Parsing config file $1..."
+
+# 使用CloudFormation或者其他机制创建基础设施
+echo "Creating resources..."
+
+# 在节点中获取Docker镜像
+echo "Pulling docker image..."
+
+# 在节点中运行Docker容器
+echo "Running docker contianer..."
+```
+
+为了实现当EC2节点启动后，能自动执行Docker镜像获取和部署，将docker-deploy.sh的代码嵌入到CloudFormation的User Data中。
+
+2. 定义生产环境配置文件`deploy/deploy-prod.yml`
+```
+app:
+  name: products-service
+
+docker:
+  image: guanwei/products-service:latest
+
+aws:
+  vpc: vpc-xxx
+  region: xxx
+  subnets:
+    - subnet-xxx-A
+    - subnet-xxx-B
+  load_balancers:
+    name: products-service-xxx
+    dns: products-service-elb.xxx.amazonaws.com
+  instances:
+    type: t2.micro
+    min: 1
+    max: 2
+
+splunk:
+  host: splunk-prod-xxx.microservice-in-action.com
+  index: products-service
+
+nagios:
+  host: nagios-xxx.microservice-in-action.com
+```
+
+3. 定义测试环境配置文件`deploy/deploy-test.yml`
+
+```
+app:
+  name: products-service
+
+docker:
+  image: guanwei/products-service:latest
+
+aws:
+  vpc: vpc-xxx
+  region: xxx
+  subnets:
+    - subnet-xxx-A
+    - subnet-xxx-B
+  load_balancers:
+    name: products-service-xxx
+    dns: products-service-elb.xxx.amazonaws.com
+  instances:
+    type: t2.micro
+    key_pair: products-service
+    min: 1
+    max: 2
+
+splunk:
+  host: splunk-prod-xxx.microservice-in-action.com
+  index: products-service
+
+nagios:
+  host: nagios-prod-xxx.microservice-in-action.com
+```
+
+通常情况下，为了保持安全性和隔离性，生产环境和测试环境试运行在两个独立的AWS账号下。
+
+## 持续集成环境
+
+这里选用[Travis-CI](https://travis-ci.org/)作为持续交付工具。
+
+新建`.travis.yml`
+```
+sudo: true
+dist: trusty
+
+jobs:
+  include:
+  - stage: build
+    install: bundle install --jobs=8 --retry=3
+  - stage: tests
+    script: bundle exec rake
+```

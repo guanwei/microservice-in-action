@@ -1,0 +1,9 @@
+sudo: true
+dist: trusty
+
+jobs:
+  include:
+  - stage: build
+    install: bundle install --jobs=8 --retry=3
+  - stage: tests
+    script: bundle exec rake
