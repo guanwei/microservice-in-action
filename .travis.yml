@@ -1,9 +1,10 @@
-sudo: true
 dist: trusty
+
+gemfile: products-service/Gemfile
 
 jobs:
   include:
   - stage: build
     install: bundle install --jobs=8 --retry=3
-  - stage: tests
+  - stage: test
     script: bundle exec rake
