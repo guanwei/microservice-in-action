@@ -1,5 +1,4 @@
-dist: trusty
-
+language: ruby
 gemfile: products-service/Gemfile
 
 install: bundle install --jobs=8 --retry=3
