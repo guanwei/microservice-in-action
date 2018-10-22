@@ -830,6 +830,7 @@ aws:
     dns: products-service-elb.xxx.amazonaws.com
   instances:
     type: t2.micro
+    key_pair: products-service
     min: 1
     max: 2
 
@@ -838,7 +839,7 @@ splunk:
   index: products-service
 
 nagios:
-  host: nagios-xxx.microservice-in-action.com
+  host: nagios-prod-xxx.microservice-in-action.com
 ```
 
 3. 定义测试环境配置文件`deploy/deploy-test.yml`
@@ -866,28 +867,97 @@ aws:
     max: 2
 
 splunk:
-  host: splunk-prod-xxx.microservice-in-action.com
+  host: splunk-test-xxx.microservice-in-action.com
   index: products-service
 
 nagios:
-  host: nagios-prod-xxx.microservice-in-action.com
+  host: nagios-test-xxx.microservice-in-action.com
 ```
 
 通常情况下，为了保持安全性和隔离性，生产环境和测试环境试运行在两个独立的AWS账号下。
 
 ## 持续集成环境
 
-这里选用[Travis-CI](https://travis-ci.org/)作为持续交付工具。
+持续交付流水线通常包括3个阶段。
+* 提交阶段
+* 验证阶段
+* 发布阶段
+* 部署阶段
+
+### 提交阶段
+
+提交阶段主要检测代码库的变化，并按照配置触发相应的处理。
+* 代码编译
+* 静态检查
+* 运行单元测试
+
+### 验证阶段
+
+验证阶段主要进行功能、性能等的验证。
+
+* 运行集成测试
+* 运行用户行为测试
+* 运行组件测试
+* 运行性能测试
+
+### 构建阶段
+
+构建阶段主要任务是构建部署包。
+
+> ### 语义化版本
+> 语义化版本是指对于一个给定的版本号，将其定义为MAJOR.MINOR.PATCH(主、次、补丁)，其变化的规律通常指：
+> * MAJOR version (主版本) 会在API发生不可向下兼容的改变时增大。
+> * MINOR version (次版本) 会在有向下兼容的新功能加入时增大。
+> * PATCH version (补丁版本) 会在有向下兼容的缺陷被修复时增大。
+
+### 发布阶段
+
+发布阶段主要将部署包发布到具体的环境中。
+
+通常包括三类：
+* 测试环境
+* 类生产环境
+* 生产环境
+
+| 测试环境 | 类生产环境 | 生产环境
+--- | --- | --- | ---
+触发方式 | 自动 | 手动 | 手动
+数据来源 | 模拟数据 | 真实数据 | 真实数据
+使用目的 | 主要用于开发团队内部验证功能为主 | 基于生产环境的真实数据为业务部门进行演示 | 为用户提供真实的服务
+
+调用如下命令部署测试环境和生产环境：
+```
+$ deploy/deploy.sh deploy-test.yml  # 部署测试环境
+$ deploy/deploy.sh deploy-prod.yml  # 部署生产环境
+```
+
+可以抽象出一个更简洁的不同环境的部署脚本`ci-deploy.sh`
+```
+#!/bin/bash
+set -e
+
+[[ -z "$1" ]] && echo "Usage: Please Specify environment !!!" && exit 1
+./deploy/deploy.sh "deploy/deploy-$1.yml"
+```
+
+部署测试环境和生产环境可以简化为：
+```
+./ci-deploy.sh test  # 部署测试环境
+./ci-deploy.sh prod  # 部署生产环境
+```
+
+可以使用[Travis-CI](https://travis-ci.org/)作为持续交付工具，这里省略部署部分。
 
 新建`.travis.yml`
 ```
-sudo: true
-dist: trusty
+language: ruby
+rvm: 2.5.0
+gemfile: products-service/Gemfile
 
-jobs:
-  include:
-  - stage: build
-    install: bundle install --jobs=8 --retry=3
-  - stage: tests
-    script: bundle exec rake
+install: bundle install --jobs=8 --retry=3
+before_script: cd products-service
+script: bundle exec rake
 ```
+
+## 日志聚合
+

@@ -1,0 +1,27 @@
+app:
+  name: products-service
+
+docker:
+  image: guanwei/products-service:latest
+
+aws:
+  vpc: vpc-xxx
+  region: xxx
+  subnets:
+    - subnet-xxx-A
+    - subnet-xxx-B
+  load_balancers:
+    name: products-service-xxx
+    dns: products-service-elb.xxx.amazonaws.com
+  instances:
+    type: t2.micro
+    key_pair: products-service
+    min: 1
+    max: 2
+
+splunk:
+  host: splunk-prod-xxx.microservice-in-action.com
+  index: products-service
+
+nagios:
+  host: nagios-prod-xxx.microservice-in-action.com
