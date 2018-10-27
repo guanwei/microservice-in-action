@@ -961,3 +961,507 @@ script: bundle exec rake
 
 ## 日志聚合
 
+如果没有合适的工具，从成百个节点上的上百个日志文件中搜索出错日志会变得很困难，同时也意味着定位变得很困难，同时也意味着定位问题、发现问题的成本将随着节点数量的增多呈指数增加。
+
+日志聚合工具主要以Splunk和LogStash为主。
+
+* ### Splunk
+
+Splunk (<http://www.splunk.com/>) 是一款功能强大的日志管理工具，可以用多种方式来添加日志，生成图形化报表。它最强大的功能是搜索。Splunk分为免费版和收费版，免费版每天索引量最大为500MB。Splunk的主要功能包括：
+* 日志聚合
+* 日志搜索
+* 语义提取
+* 对结果进行分组、联合、拆分和格式化
+* 强大的可视化功能
+* 电子邮件提醒功能
+
+Splunk可以单机部署，也可以分布式部署。
+
+* ### LogStash
+
+LogStash (<http://www.logstash.net>) 是一款开源的日志管理工具，使用JRuby语言实现。主要功能包括：
+* 收集日志
+
+LogStash可以从多个数据源获取日志，譬如标准输入、日志文件或者是syslog等。同时内嵌支持多种日志的格式，如系统日志、Web服务器日志、错误日志、应用日志等。如果日志的输入是syslog，用户不必在每台服务器上安装日志代理（Log Agent），默认的rsyslog客户端就可以直接同步日志。
+
+* 过滤日志
+
+LogStash内置了许多过滤器，如grep、split、multiline等，能够方便地为客户定制过滤策略。
+
+* 结果输出
+
+除了能将日志内容输出到标准输出，LogStash还能和ElasticSearch、MongoDB等配合使用。实际上、LogStash通常会和ElastiSearch以及Kibana配合使用，组成ELK（ElasticSearch作为日志的搜索引擎，LogStash作为日志的处理引擎，Kibana作为前端的报表展示）。
+
+本例中使用Splunk作为日志聚合工具。
+
+### 安装Splunk索引器
+
+从Splunk官网下载Splunk Enterprise或者Splunk Light版本进行安装。默认，索引器和搜索器是安装在一起的。
+
+### 安装Splunk转发器
+
+从官方网站下载Splunk Forwarder，并配置好索引器的IP地址和端口号。然后设置inputs.conf文件，默认在$SPLUNK_DIR/etc/system/local/inputs.conf，并在其中添加如下配置：
+```
+[monitor:///var/log/httpd/error.products_service.log]
+index = products_service
+sourcetype = products_service_http_error_log
+
+[monitor:///var/log/httpd/access.products_service.log]
+index = products_service
+sourcetype = products_service_http_access_log
+
+[monitor:///var/log/products_service/production.log]
+index = products_service
+sourcetype = products_service_production_log
+```
+
+### 日志查找
+
+譬如，想要搜索products-service昨天的关键字包含`error`的日志，可以用如下方式进行搜索：
+```
+index=products_service sourcetype=products_service_production_log earliest=-1d@d latest=-0d@d error
+```
+
+### 告警设置
+
+设置告警主要分成三步。
+1. 保存搜索条件“Save Search”，为后续的告警设置条件。
+2. 设置”告警阈值“，超过阈值时触发告警。
+3. 定义”告警响应“，告警触发后的处理动作。
+
+## 监控与告警
+
+关于监控，目前业界已经存在很多成熟的产品，譬如Ganglia、Zabbix、NewRelic、Nagios和OneAPM等。
+
+这里使用Nagios作为监控工具。Nagios安装完成后，会在`/usr/local/nagios`目录下生成相应的主机、服务、命令、模板等配置文件。
+
+目录名称 | 作用
+--- | ---
+bin | Nagios可执行程序所在的目录
+etc | Nagios配置文件所在的目录
+sbin | Nagios cgi文件所在的目录，也就是执行外部命令所需的文件所在的目录
+share | Nagios网页存放路径
+libexec | Nagios外部插件存放目录
+var | Nagios日志文件、Lock等文件所在的目录
+var/archives | Nagios日志自动归档目录
+var/rw | 用来存放外部命令文件的目录
+
+Nagios相关配置文件的名称及用途。
+
+配置文件 | 作用
+--- | ---
+nagios.cfg | Nagios的主配置文件
+objects | objects是一个目录，存放配置模板
+objects/commands.cfg | 命令定义配置文件，其中定义的命令可以被其他配置文件引用
+objects/templates.cfg | 定义主机和服务的一个模板配置文件，可以在其他配置文件中引用
+objects/timeperiods.cfg | 定义Nagios监控时间段的配置文件
+objects/windows.cfg | 监控Windows主机的一个配置文件模板，默认没有启用此文件
+
+### 监控products-service
+
+1. 定义主机和服务监控
+```
+define host {
+  use             business-hours-service
+  hostgroups      products-service
+  host_name       products-service.corp
+  address         products-service.internal.corp
+  check_command   check_dig!$HOSTADDRESS$
+}
+
+define service {
+  use                    generic-service
+  host_name              products-service.corp
+  service_description    HTTPS  Healthcheck
+  check_command          check_http_health
+}
+```
+
+2. 实现监控命令
+
+在`commands.cfg`中依次添加check_dig以及check_http_health命令
+```
+# 'check_http_health' command definition
+define command {
+  command_name    check_dig
+  command_line    /usr/lib/nagios/plugins/check_dig --query_address $ARG1$ -H $HOSTADDRESS$ -t 30
+}
+
+# 'check_http_health' command definition
+define command {
+  command_name   check_http_health
+  command_line   $USER1$/check_http -H $HOSTADDRESS$ -u "/diagnostic/status/nagios" -w 50 -c 60 -e "HTTP/1.0 200","HTTP/1.1 200" $ARG1$ -f follow
+}
+```
+
+3. 定义监控时间段
+
+通常，我们都将监控时间段定义在template中。
+```
+define service {
+  contact_groups             OperationsTeam
+  name                       Working-hours-service-tmpl
+  action_checks_enabled      1
+  notifications_enabled      1
+  check_period               24x7
+  normal_check_interval      1440
+  retry_check_interval       5
+  max_check_attempts         10    # when a non-OK state is returned
+  first_notification_delay   0
+  notification_options       w,u,c,r
+}
+```
+
+4. 定义联系人
+
+在`contact.cfg`中定义发生异常时待通知的联系人。
+```
+define contact {
+  contact_name         products-service-admin
+  alias                Nagios Admin
+  use                  generic-contact
+  email                products-serviced@gmail.com
+}
+
+define contact {
+  contact_name         products-service-admin-pager
+  alias                Nagios Admin(Phone)
+  use                  generic-contact-sms
+  pager                xxxxxx
+}
+```
+
+### 告警
+
+针对每个服务，都应该提供有效的告警机制，确保当前服务出现异常时，能够准确有效地通知到责任人，并及时解决问题。
+
+PagerDuty是一款能够在系统出现问题时及时发送消息提醒的应用，提醒方式包括屏幕显示、电话呼叫、短信通知、邮件通知等。同时还能够集成现有的即时消息通信工具，譬如Slack、Skype以及第三方的监控应用，譬如Newrelic、Nagios、Splunk等。在规定的时间内无人应答时，PageDuty还能自动将消息的重要性级别提高。
+
+## 功能迭代
+
+有了基础设施、构建、部署、持续交付流水线以及相应的运维保障机制，接下来，我们可以通过频繁且持续迭代的方式，完成products-service需要的功能。
+
+将products-service的实现划分成几个小任务，一方面便于团队跟踪进度，另一方面也能帮助团队在单位时间内聚焦某一个任务。
+
+1. 定义Product
+2. 持久化Product
+3. 获取Product
+4. 定义API的输出
+
+### 定义模型
+
+```
+class Product
+  include Virtus.model
+
+  attribute :id,        Integer
+  attribute :name,      String
+  attribute :price,     Float
+  attribute :category,  String
+end
+```
+
+这里使用 rom-sql (<https://github.com/rom-rb/rom-sql>) 完成Product的存储以及获取。
+```
+class ProductRepository
+  class << self
+    def find(id)
+      relation.as(:products).find(id).first || raise(Error, 'Product not find')
+    end
+
+    private
+    def relation
+      Database.db.relation(:products)
+    end
+  end
+end
+```
+
+另外，需要对rom-sql的relation以及数据库和model之间的映射进行配置：
+```
+def self.setup_relations(rom)
+  rom.relation(:products) do
+    def find(id)
+      where(id: id)
+    end
+  end
+end
+
+def self.setup_mappings(rom)
+  rom.mappers do
+    define(:products) do
+      model ProductService::Product
+    end
+  end
+end
+```
+
+### 定义表现形式
+
+### 实现API
+
+products-service实现的代码结构如下：
+```
+|-- app
+|    |-- api.rb
+|    |-- models
+|    |     |
+|    |     --- product.rb
+|    |-- repositories
+|    |     |-- product_repository.rb
+|    |     --- record_not_found_error.rb
+|    ---- representers
+|          |-- product_representer.rb
+|          --- products_representer.rb
+```
+
+### 服务描述文件
+
+服务描述文件主要包括如下几个部分：
+* 服务介绍
+* 维护者信息
+* 服务的SLA
+* 服务运行环境
+* 开发、测试、构建和部署
+* 监控和告警
+
+服务描述文件模板：
+```
+1. 服务介绍
+  * 服务名称
+  * 服务功能
+2. 服务维护者
+  * 记录服务的维护者，通常是能直接联系到的个人
+3. 服务可用期（SLA，Service Level Agreements）
+  * 服务可用期，譬如，周一 ~ 周五（9:00 ~ 19:00）
+4. 运行环境
+  * 生产环境地址
+    譬如 http://product-service.vendor.com
+  * 测试环境地址
+    譬如 http://product-service.test.vendor.com
+5. 开发（描述开发相关的信息），通常包括但不限于以下几项。
+  * 如何搭建开发环境
+  * 如何运行服务
+  * 如何调试
+6. 测试（描述测试相关的信息），通常包括但不限于以下几项。
+  * 测试策略
+  * 如何运行测试
+  * 如何查看测试的统计结果，譬如覆盖率、运行时间
+7. 构建（描述持续集成以及构建的信息），通常包括但不限于以下几项。
+  * 持续集成环境
+  * 持续集成流程描述
+  * 构建后的部署包发布
+8. 部署（描述部署相关的信息），通常包括但不限于以下几项。
+  * 如何部署到不同环境
+  * 部署后的功能验证
+9. 运维（描述运维相关的信息），通常包括但不限于以下几项。
+  * 日志聚合的访问URL
+  * 监控信息的访问URL
+```
+
+## 微服务与持续交付
+
+### 持续交付的核心
+
+* 小批量价值流动
+* 频繁可发布
+* 快速反馈
+
+### 微服务架构与持续交付
+
+在微服务架构中，由于每个服务都是一个独立的、可部署的业务单元。因此，每个服务也应该对应着一套独立的持续交付流水线。
+
+### 开发
+
+* 独立代码库
+* 服务说明文件
+* 代码所有权归团队
+* 有效的代码版本管理工具
+* 代码静态检查工具
+* 易于本地运行
+
+### 测试
+
+* 集成测试的二义性
+* Mock与Stub
+* 接口测试
+* 测试的有效性
+
+### 持续集成
+
+### 部署
+
+1. 部署环境
+
+* 基于IAAS层
+* 基于PAAS层
+* 基于数据中心
+* 基于容器技术
+
+2. 部署方式
+
+* 手动部署
+* 脚本部署
+* 基础设施部署自动化
+* 应用部署自动化
+* 镜像部署
+* 容器部署
+
+### 运维
+
+* 监控
+* 告警
+* 日志聚合
+
+## 微服务与轻量级通信机制
+
+### 同步通信与异步通信
+
+### 远程调用RPC
+
+RPC又称远程过程调用，是一种典型的分布式节点间同步通信的实现方式。远程过程调用采用客户端/服务端的模式，请求的发起者是客户端，提供响应的是服务器端。
+
+#### 远程过程调用的弊端
+
+* 耦合度高
+* 灵活性差
+
+### REST
+
+REST是近几年使用比较广泛的分布式节点间同步通信的实现方式。
+
+#### REST的核心
+
+* 资源
+* 表述
+* 状态转移
+* 统一接口
+
+客户端操作资源的4种方式：
+* GET 用来获取资源
+* POST 用来新建资源
+* PUT 用来更新资源
+* DELETE 用来销毁资源
+
+#### REST的优势
+
+由于HTTP本身的无状态性，使用REST，能够有效保持服务/应用的无状态性，利于将来的水平伸缩。
+
+#### REST的不足
+
+* 如何标准化资源结构
+* 如何有效处理相关资源的链接
+
+### HAL
+
+HAL的实现基于REST，并有效地解决了REST中资源结构标准化和如何有效定义资源链接的问题。
+
+HAL将资源分为三个基本的部分：
+* 状态
+* 链接
+* 子资源
+
+```
+{
+  "_links": {...},
+  state": {...},
+  "_embedded": {
+    "category": {
+      "_links": {...},
+      "state": {...}
+    },
+    ...
+  }
+}
+```
+
+### 消息队列
+
+消息队列是一种处理节点之间异步通信的实现方式。发送消息的一端称为发布者，接收消息的一端称为消费者。
+
+#### 核心部分
+
+* 持久性
+* 排队标准
+* 安全策略
+* 清理策略
+* 处理通知
+
+#### 访问方式
+
+* 拉模式
+
+通常在拉模式下，一般存在一个发布者和一个消费者。
+
+* 推模式
+
+通常在推模式下，一般存在多个消费者，也称他们为订阅者。
+
+#### 消息队列的优点
+
+* 服务间解耦
+* 异步通信
+* 消息的持久化以及恢复支持
+
+#### 消息队列的缺点
+
+* 实现复杂度增加
+* 平台或者协议依赖
+* 维护成本高
+
+### 后台任务处理系统
+
+后台任务处理系统主要包括如下几部分：
+* 任务
+
+任务是指后台处理系统中可执行的最小单元。
+
+* 队列
+
+队列主要用于存储任务，并提供任务执行失败后的错误处理机制，譬如失败重试、任务清理等。目前大多数后台任务处理系统通常采用Redis作为队列的实现机制。
+
+* 执行器
+
+执行器主要负责从队列中获取任务，并执行任务。后台系统运行时可以指定一个或者多个执行器。
+
+* 定时器
+
+定时器主要设置执行器运行的周期，譬如每1分钟或者3分钟运行执行器来执行任务。
+
+#### 服务回调
+
+通常会保持任务的轻量级，不会再任务中做过多的逻辑，而是尽量做到由任务回调具体的服务来完成交互。
+
+#### 后台服务的优点
+
+* 轻量级通信机制
+* 维护成本低
+* SDK及API支持
+
+| 远程方法调用 | REST | HAL | 消息队列 | 后台任务系统
+---|---|---|---|---
+通信方式 | 同步通信 | 同步或异步通信 | 同步或异步通信 | 异步通信 | 异步通信
+平台依赖性 | 强 | 平台无关 | 平台无关 | 强 | 强
+语言支持 | 好 | 语言无关 | 语言无关 | 好 | 中
+学习成本 | 高 | 低 | 低 | 高 | 低
+维护成本 | 高 | 低 | 低 | 高 | 低
+
+## 微服务与测试
+
+### 微服务的结构
+
+* 业务模型
+* 业务逻辑
+* 模型存储
+* 资源定义
+  * 表述内容
+  * 描述格式
+* 网关集成
+
+### 微服务的测试策略
+
+* 单元测试
+* 接口测试
+* 集成测试
+* 组件测试
+* 端到端测试
